@@ -3,138 +3,74 @@
 
 #include <iostream>
 #include <coroutine>
+#include <semaphore>
+#include <thread>
+#include <vector>
+#include <variant>
+#include <cassert>
+#include "CoroutineTest.h"
 
 
-template <typename T>
-class Generator {
-    struct Promise {
-        T value_;
-        auto get_return_object() -> Generator {
-            using Handle = std::coroutine_handle<Promise>;
-            return Generator{ Handle::from_promise(*this) };
-        }
-        auto initial_suspend() 
-        { 
-            return std::suspend_always{}; 
-        }
-
-        auto final_suspend() noexcept 
-        { 
-            return std::suspend_always{}; 
-        }
-
-        void return_void() {}
-        void unhandled_exception() { throw; }
-        auto yield_value(T&& value) 
-        {
-            value_ = std::move(value);
-            return std::suspend_always{};
-        }
-        auto yield_value(const T& value) 
-        {
-            value_ = value;
-            return std::suspend_always{};
-        }
-    };
-    struct Sentinel {};
-    struct Iterator {
-        using iterator_category = std::input_iterator_tag;
-        using value_type = T;
-        using difference_type = ptrdiff_t;
-        using pointer = T*;
-        using reference = T&;
-        std::coroutine_handle<Promise> h_; // Data member
-        Iterator& operator++() {
-            h_.resume();
-            return *this;
-        }
-        void operator++(int) 
-        { 
-            (void)operator++(); 
-        }
-        T operator*() const 
-        { 
-            return h_.promise().value_; 
-        }
-        T* operator->() const 
-        { 
-            return std::addressof(operator*()); 
-        }
-        bool operator==(Sentinel) const 
-        {
-            return h_.done(); 
-        }
-    };
-
-    std::coroutine_handle<Promise> h_;
-    explicit Generator(std::coroutine_handle<Promise> h) 
-        : h_{ h }
-        {}
-public:
-    using promise_type = Promise;
-    Generator(Generator&& g) 
-        : h_(std::exchange(g.h_, {})) 
-        {}
-    ~Generator() 
-    { 
-        if (h_) 
-        { 
-            h_.destroy(); 
-        } 
-    }
-
-    auto begin() 
-    {
-        h_.resume();
-        return Iterator{ h_ };
-    }
-    auto end() 
-    { 
-        return Sentinel{}; 
-    }
-};
-
-template <typename T>
-auto seq() -> Generator<T> {
-    for (T i = {};; ++i) {
-        co_yield i;
-    }
+auto height() -> Task<int> { co_return 20; } // Dummy coroutines
+auto width() -> Task<int> { co_return 30; }
+auto area() -> Task<int> {
+    co_return co_await height() * co_await width();
 }
-template <typename T>
-auto take_until(Generator<T>& gen, T value) -> Generator<T> {
-    for (auto&& v : gen) {
-        if (v == value) {
-            co_return;
-        }
-        co_yield v;
-    }
+
+// 대략적인 flow
+/*
+// Pseudo code
+auto&& a = expr; // Evaluate expr, a is the awaitable
+if (!a.await_ready()) { // Not ready, wait for result
+ a.await_suspend(h); // Handle to current coroutine
+ // Suspend/resume happens here
 }
-template <typename T>
-auto add(Generator<T>& gen, T adder) -> Generator<T> {
-    for (auto&& v : gen) {
-        co_yield v + adder;
-    }
-}
+auto result = a.await_resume();
+
+
+co_yield some_value;
+-> co_await promise.yield_value(some_value);
+*/
+
+
+auto coroutine() -> Resumable { // Initial suspend
+    std::cout << "3 ";
+    co_await std::suspend_always{}; // Suspend (explicit)
+    std::cout << "5 ";
+} // Final suspend then return
+
+
 int main()
 {
-    auto s = seq<int>();
-    auto t = take_until<int>(s, 10);
-    auto a = add<int>(t, 3);
-    int sum = 0;
-    for (auto&& v : a) {
-        sum += v;
+    // test 0
+    {
+        std::cout << "1 ";
+        auto resumable = coroutine(); // Create coroutine state
+        std::cout << "2 ";
+        resumable.resume(); // Resume
+        std::cout << "4 ";
+        resumable.resume(); // Resume
+        std::cout << "6 ";
+
     }
-    return sum; // returns 75
+    
+    // test 1
+    {
+        auto a = area();
+        int value = sync_wait(a);
+        std::cout << value; // Outputs: 600
+    }
+
+    // test 2
+    {
+        auto s = seq<int>();
+        auto t = take_until<int>(s, 10);
+        auto a = add<int>(t, 3);
+        int sum = 0;
+        for (auto&& v : a) {
+            sum += v;
+        }
+    }
+
     std::cout << "Hello World!\n";
 }
-
-// 프로그램 실행: <Ctrl+F5> 또는 [디버그] > [디버깅하지 않고 시작] 메뉴
-// 프로그램 디버그: <F5> 키 또는 [디버그] > [디버깅 시작] 메뉴
-
-// 시작을 위한 팁: 
-//   1. [솔루션 탐색기] 창을 사용하여 파일을 추가/관리합니다.
-//   2. [팀 탐색기] 창을 사용하여 소스 제어에 연결합니다.
-//   3. [출력] 창을 사용하여 빌드 출력 및 기타 메시지를 확인합니다.
-//   4. [오류 목록] 창을 사용하여 오류를 봅니다.
-//   5. [프로젝트] > [새 항목 추가]로 이동하여 새 코드 파일을 만들거나, [프로젝트] > [기존 항목 추가]로 이동하여 기존 코드 파일을 프로젝트에 추가합니다.
-//   6. 나중에 이 프로젝트를 다시 열려면 [파일] > [열기] > [프로젝트]로 이동하고 .sln 파일을 선택합니다.
